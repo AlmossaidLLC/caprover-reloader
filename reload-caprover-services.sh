@@ -22,9 +22,20 @@ echo "Clearing cache and memory..."
 sudo swapoff -a && sudo swapon -a
 sudo sh -c 'sync && echo 3 > /proc/sys/vm/drop_caches'
 
+# Clean Docker resources
+echo "Cleaning Docker resources..."
+docker system prune -f
+find /var/lib/docker/containers/ -name "*.log" -exec truncate -s 0 {} \;
+
+# Clean system logs and temp files
+echo "Cleaning system logs and temp files..."
+sudo journalctl --vacuum-size=100M
+sudo rm -rf /tmp/*
+
 # Restart docker
 echo "Restarting docker..."
 sudo systemctl restart docker
+sleep 5
 
 # Start caprover core services (captain services)
 echo "Starting core services..."
