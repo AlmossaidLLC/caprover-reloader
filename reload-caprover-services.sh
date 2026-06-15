@@ -3,6 +3,7 @@
 # Stop only selected caprover app services except core services
 echo "Stopping services..."
 docker service ls --format '{{.Name}} {{.Replicas}}' | grep '^srv-captain--' | \
+    grep -v '0/0' | \
     awk '{print $1}' | \
     while read s; do
         docker service scale ${s}=0
