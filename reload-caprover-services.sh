@@ -41,6 +41,38 @@ wait_for_docker() {
     done
 }
 
+# Docker requires bind mount source paths to exist before tasks can start
+ensure_service_bind_paths() {
+    local s="$1"
+    local src
+    while IFS= read -r src; do
+        [ -n "$src" ] || continue
+        if [ ! -e "$src" ]; then
+            echo "Creating missing bind path for ${s}: ${src}"
+            mkdir -p "$src"
+        fi
+    done < <(docker service inspect "$s" --format '{{range .Spec.TaskTemplate.ContainerSpec.Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}')
+}
+
+# Wait until a service reports 1/1 (or timeout)
+wait_for_service_1() {
+    local s="$1"
+    local timeout="${2:-90}"
+    local i=0
+    local replicas
+    echo "Waiting for ${s} to become 1/1..."
+    while [ "$i" -lt "$timeout" ]; do
+        replicas="$(docker service ls --format '{{.Name}} {{.Replicas}}' | awk -v n="$s" '$1 == n {print $2}')"
+        case "$replicas" in
+            1/1*) return 0 ;;
+        esac
+        i=$((i + 1))
+        sleep 1
+    done
+    echo "Warning: ${s} did not reach 1/1 within ${timeout}s (last: ${replicas:-unknown})" >&2
+    return 1
+}
+
 # Force-recreate a core service at 1 replica (more reliable than scale alone)
 start_core_service() {
     local s="$1"
@@ -48,7 +80,15 @@ start_core_service() {
         echo "Skipping ${s} (not found)"
         return 0
     fi
-    docker service update --replicas 1 --force "$s"
+    ensure_service_bind_paths "$s"
+    if ! docker service update --replicas 1 --force "$s"; then
+        echo "Retrying ${s} after re-checking bind paths..."
+        ensure_service_bind_paths "$s"
+        docker service update --replicas 1 --force "$s" || {
+            echo "Failed to start ${s}" >&2
+            return 1
+        }
+    fi
     echo "Started ${s} (force update)"
 }
 
@@ -115,10 +155,17 @@ echo "Restarting docker..."
 sudo systemctl restart docker
 wait_for_docker
 
-# Start CapRover core in dependency order with force recreate
+# Ensure CapRover root data dir exists after docker restart
+mkdir -p /captain/data
+
+# Start CapRover core in dependency order with force recreate.
+# Wait for captain-captain first — it owns shared paths that registry/nginx need.
 echo "Starting core services..."
 for s in "${CORE_SERVICES[@]}"; do
-    start_core_service "$s"
+    start_core_service "$s" || true
+    if [ "$s" = "captain-captain" ]; then
+        wait_for_service_1 "captain-captain" 90 || true
+    fi
 done
 
 # Start only DB/project services that actually exist (skip missing to avoid slow failures)
