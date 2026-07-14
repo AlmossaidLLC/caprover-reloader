@@ -13,8 +13,8 @@ DB_SERVICES=(
   srv-captain--pgsql
   srv-captain--redis
   srv-captain--dbgate
-#   srv-captain--phpmyadmin
-#   srv-captain--pg-admin
+  srv-captain--phpmyadmin
+  srv-captain--pg-admin
   srv-captain--minio-s3
   srv-captain--minio-s3-api
   srv-captain--rustfs
