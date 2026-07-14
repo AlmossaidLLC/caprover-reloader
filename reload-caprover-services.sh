@@ -10,9 +10,11 @@ CORE_SERVICES=(
 )
 DB_SERVICES=(
   srv-captain--mariadb-db
-  srv-captain--phpmyadmin
   srv-captain--pgsql
-  srv-captain--pg-admin
+  srv-captain--redis
+  srv-captain--dbgate
+#   srv-captain--phpmyadmin
+#   srv-captain--pg-admin
   srv-captain--minio-s3
   srv-captain--minio-s3-api
   srv-captain--rustfs
