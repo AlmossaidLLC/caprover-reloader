@@ -1,6 +1,13 @@
 #!/bin/bash
 
-CORE_SERVICES="captain-captain captain-certbot captain-nginx captain-registry"
+# Start order matters: captain first, then registry, nginx, certbot.
+# Stop uses the reverse order.
+CORE_SERVICES=(
+  captain-captain
+  captain-registry
+  captain-nginx
+  captain-certbot
+)
 DB_SERVICES=(
   srv-captain--mariadb-db
   srv-captain--phpmyadmin
@@ -11,6 +18,15 @@ DB_SERVICES=(
   srv-captain--rustfs
   srv-captain--rustfs-api
 )
+
+is_core_service() {
+    local n="$1"
+    local c
+    for c in "${CORE_SERVICES[@]}"; do
+        [ "$c" = "$n" ] && return 0
+    done
+    return 1
+}
 
 # Wait until Docker/Swarm responds after restart
 wait_for_docker() {
@@ -25,6 +41,17 @@ wait_for_docker() {
     done
 }
 
+# Force-recreate a core service at 1 replica (more reliable than scale alone)
+start_core_service() {
+    local s="$1"
+    if [ -z "${EXISTING_SERVICES[$s]:-}" ]; then
+        echo "Skipping ${s} (not found)"
+        return 0
+    fi
+    docker service update --replicas 1 --force "$s"
+    echo "Started ${s} (force update)"
+}
+
 # One pass: collect existing names, multi-replica services, and apps to stop
 declare -A EXISTING_SERVICES=()
 SCALED_SERVICES=()
@@ -34,9 +61,9 @@ echo "Collecting services..."
 while read -r name replicas; do
     EXISTING_SERVICES["$name"]=1
 
-    case " $CORE_SERVICES " in
-        *" $name "*) continue ;;
-    esac
+    if is_core_service "$name"; then
+        continue
+    fi
 
     desired="${replicas%%/*}"
     if [ -n "$desired" ] && [ "$desired" -gt 1 ] 2>/dev/null; then
@@ -60,11 +87,11 @@ if [ ${#STOP_SCALE_ARGS[@]} -gt 0 ]; then
     echo "Stopped ${#STOP_SCALE_ARGS[@]} app services"
 fi
 
-# Stop CapRover core in one batch
+# Stop CapRover core in reverse order (certbot → nginx → registry → captain)
 echo "Stopping core services..."
 CORE_STOP_ARGS=()
-for s in $CORE_SERVICES; do
-    CORE_STOP_ARGS+=("${s}=0")
+for ((i=${#CORE_SERVICES[@]}-1; i>=0; i--)); do
+    CORE_STOP_ARGS+=("${CORE_SERVICES[i]}=0")
 done
 docker service scale "${CORE_STOP_ARGS[@]}"
 echo "Stopped core services"
@@ -88,14 +115,11 @@ echo "Restarting docker..."
 sudo systemctl restart docker
 wait_for_docker
 
-# Start CapRover core in one batch
+# Start CapRover core in dependency order with force recreate
 echo "Starting core services..."
-CORE_START_ARGS=()
-for s in $CORE_SERVICES; do
-    CORE_START_ARGS+=("${s}=1")
+for s in "${CORE_SERVICES[@]}"; do
+    start_core_service "$s"
 done
-docker service scale "${CORE_START_ARGS[@]}"
-echo "Started core services"
 
 # Start only DB/project services that actually exist (skip missing to avoid slow failures)
 echo "Starting project database services..."
